@@ -12,6 +12,8 @@ typedef struct state_t_ {
 
   char phil_states[PHIL_COUNT];
   int count_eating;
+
+  HANDLE forks[PHIL_COUNT];
   
   // CRITICAL_SECTION cs;
   // CONDITION_VARIABLE cond;
@@ -28,54 +30,105 @@ BOOL can_eat(int idx) {
   return (state.phil_states[idx_prev] != 'E' && state.phil_states[idx_next] != 'E');
 }
 
+// DWORD WINAPI start_eating(LPVOID lp) {
+//   int idx = *(int*)lp;
+//  
+//   uint16_t idx_prev = (uint16_t)(idx+PHIL_COUNT-1)%PHIL_COUNT;
+//   uint16_t idx_next = (uint16_t)(idx+1)%PHIL_COUNT;
+//   while(state.total_time > state.curr_time) {
+//
+//     // printf("[+] Start Eating: %d\n", idx+1);
+//    
+//     Sleep(state.time_to_sleep);
+//     EnterCriticalSection(&state.cs);
+//     // printf("[+] CountEating: %d | Prev: %c | Next: %c\n", state.count_eating, state.phil_states[idx_prev], state.phil_states[idx_next]);
+//    
+//     state.phil_states[idx] = 'H';
+//     while(state.count_eating == PHIL_COUNT-1 || !can_eat(idx)) {
+//       SleepConditionVariableCS(&state.cond, &state.cs, INFINITE);
+//     }
+//
+//     if(state.total_time <= state.curr_time || 
+//         (state.count_eating > 0 && state.curr_time+state.time_to_sleep*state.count_eating >= state.total_time)) {
+//       WakeConditionVariable(&state.cond);
+//       LeaveCriticalSection(&state.cs);
+//       break;
+//     }
+//
+//     // Start eating
+//     printf("%d:%d:T->E\n", state.curr_time, idx+1, state.phil_states[idx]);
+//     state.count_eating++;
+//     state.phil_states[idx] = 'E';
+//
+//     LeaveCriticalSection(&state.cs);
+//
+//     Sleep(state.time_to_sleep);
+//
+//     EnterCriticalSection(&state.cs);
+//    
+//     state.curr_time += state.time_to_sleep;
+//     state.count_eating--;
+//     state.phil_states[idx] = 'T';
+//     printf("%d:%d:E->T\n", state.curr_time, idx+1, state.phil_states[idx]);
+//    
+//     uint16_t idx_prev = (uint16_t)(idx+PHIL_COUNT-1)%PHIL_COUNT;
+//     uint16_t idx_next = (uint16_t)(idx+1)%PHIL_COUNT;
+//
+//     if(state.phil_states[idx_prev] == 'H' && can_eat(idx_prev)) WakeConditionVariable(&state.cond);
+//     if(state.phil_states[idx_next] == 'H' && can_eat(idx_next)) WakeConditionVariable(&state.cond);
+//
+//     LeaveCriticalSection(&state.cs);
+//   }
+//
+//   return 0;
+// }
+
+void acquire_forks(int idx) {
+  uint16_t idx_next = (uint16_t)(idx+1)%PHIL_COUNT;
+  
+  if(idx < idx_next) {
+    WaitForSingleObject(state.forks[idx], INFINITE);
+    WaitForSingleObject(state.forks[idx_next], INFINITE);
+  } else {
+    WaitForSingleObject(state.forks[idx_next], INFINITE);
+    WaitForSingleObject(state.forks[idx], INFINITE);
+  }
+}
+
+void release_forks(int idx) {
+  uint16_t idx_next = (uint16_t)(idx+1)%PHIL_COUNT;
+  ReleaseMutex(state.forks[idx]);
+  ReleaseMutex(state.forks[idx_next]);
+}
+
 DWORD WINAPI start_eating(LPVOID lp) {
   int idx = *(int*)lp;
   
-  uint16_t idx_prev = (uint16_t)(idx+PHIL_COUNT-1)%PHIL_COUNT;
-  uint16_t idx_next = (uint16_t)(idx+1)%PHIL_COUNT;
   while(state.total_time > state.curr_time) {
 
     // printf("[+] Start Eating: %d\n", idx+1);
     
-    Sleep(state.time_to_sleep);
-    EnterCriticalSection(&state.cs);
+    // Sleep(state.time_to_sleep);
     // printf("[+] CountEating: %d | Prev: %c | Next: %c\n", state.count_eating, state.phil_states[idx_prev], state.phil_states[idx_next]);
-    
-    state.phil_states[idx] = 'H';
-    while(state.count_eating == PHIL_COUNT-1 || !can_eat(idx)) {
-      SleepConditionVariableCS(&state.cond, &state.cs, INFINITE);
-    }
 
-    if(state.total_time <= state.curr_time || 
-        (state.count_eating > 0 && state.curr_time+state.time_to_sleep*state.count_eating >= state.total_time)) {
-      WakeConditionVariable(&state.cond);
-      LeaveCriticalSection(&state.cs);
+    // Start eating
+    acquire_forks(idx);
+    if(state.total_time <= state.curr_time+state.count_eating*state.time_to_sleep) {
+      release_forks(idx);
       break;
     }
 
-    // Start eating
     printf("%d:%d:T->E\n", state.curr_time, idx+1, state.phil_states[idx]);
     state.count_eating++;
-    state.phil_states[idx] = 'E';
-
-    LeaveCriticalSection(&state.cs);
 
     Sleep(state.time_to_sleep);
 
-    EnterCriticalSection(&state.cs);
-    
     state.curr_time += state.time_to_sleep;
-    state.count_eating--;
-    state.phil_states[idx] = 'T';
     printf("%d:%d:E->T\n", state.curr_time, idx+1, state.phil_states[idx]);
-    
-    uint16_t idx_prev = (uint16_t)(idx+PHIL_COUNT-1)%PHIL_COUNT;
-    uint16_t idx_next = (uint16_t)(idx+1)%PHIL_COUNT;
+    state.count_eating--;
+    release_forks(idx);
 
-    if(state.phil_states[idx_prev] == 'H' && can_eat(idx_prev)) WakeConditionVariable(&state.cond);
-    if(state.phil_states[idx_next] == 'H' && can_eat(idx_next)) WakeConditionVariable(&state.cond);
-
-    LeaveCriticalSection(&state.cs);
+    // LeaveCriticalSection(&state.cs);
   }
 
   return 0;
@@ -86,13 +139,15 @@ void init_state(int total_time, int time_to_sleep) {
   state.total_time = total_time;
   state.time_to_sleep = time_to_sleep;
 
-  InitializeCriticalSection(&state.cs);
-  InitializeConditionVariable(&state.cond);
+  // InitializeCriticalSection(&state.cs);
+  // InitializeConditionVariable(&state.cond);
   
   for(int i=0; i<PHIL_COUNT; i++) 
     state.phil_states[i] = 'T';
-
-  state.mutex = CreateMutex(NULL, FALSE, NULL);
+  
+  for(int i=0; i<PHIL_COUNT; i++)
+    state.forks[i] = CreateMutex(NULL, FALSE, NULL);
+  // state.mutex = CreateMutex(NULL, FALSE, NULL);
 }
 
 int main(int argc, char** argv) {
@@ -106,10 +161,12 @@ int main(int argc, char** argv) {
 
   WaitForMultipleObjects(PHIL_COUNT, state.ths, TRUE, INFINITE);
     
-  for(int i=0; i<PHIL_COUNT; i++)
+  for(int i=0; i<PHIL_COUNT; i++) {
     CloseHandle(state.ths[i]);
+    CloseHandle(state.forks[i]);
+  }
 
-  DeleteCriticalSection(&state.cs);
+  // DeleteCriticalSection(&state.cs);
 
   return 0;
 }
